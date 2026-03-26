@@ -18,9 +18,10 @@ static const char *const CP_TAG = "ups_hid.cyberpower_hid";
 
 // ── Interrupt report drain settings ──────────────────────────────────────────
 // How long to wait for the FIRST report in each read_data() call (ms).
-// The CyberPower UPS takes ~1.4 s after USB connect before it begins
-// sending interrupt IN reports (observed on Linux).  Use 3 s to be safe.
-static const uint32_t FIRST_REPORT_TIMEOUT_MS  = 3000;
+// The transport auto-starts interrupt IN at device-connect time, so reports
+// are already queued long before read_data() is first called.  1500 ms is
+// a generous safety margin for slow or reconnected devices.
+static const uint32_t FIRST_REPORT_TIMEOUT_MS  = 1500;
 // How long to wait for ADDITIONAL reports after the first (ms).
 // Short so we drain the whole burst without blocking too long.
 static const uint32_t NEXT_REPORT_TIMEOUT_MS   = 50;
@@ -38,9 +39,8 @@ bool CyberPowerProtocol::detect() {
     return false;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(timing::USB_INITIALIZATION_DELAY_MS));
-
-  // Start interrupt IN so we can receive device-pushed reports.
+  // Interrupt IN was already started by the transport at device-connect time;
+  // this call is a no-op if active, or restarts it if somehow stopped.
   esp_err_t ret = parent_->start_interrupt_in();
   if (ret != ESP_OK) {
     ESP_LOGD(CP_TAG, "start_interrupt_in() returned %s — not an interrupt device",
@@ -112,8 +112,11 @@ bool CyberPowerProtocol::read_data(UpsData &data) {
     return false;
   }
 
-  // Ensure interrupt IN is running (may have been stopped on reconnect).
-  if (!interrupt_started_) {
+  // Ensure interrupt IN is running.  The transport auto-starts it at device-
+  // connect time, so this is normally a no-op.  Calling unconditionally also
+  // handles the reconnect case where interrupt_started_ is stale-true but the
+  // queue was torn down during the previous disconnect.
+  {
     esp_err_t ret = parent_->start_interrupt_in();
     if (ret != ESP_OK) {
       ESP_LOGE(CP_TAG, "Failed to (re)start interrupt IN: %s", esp_err_to_name(ret));

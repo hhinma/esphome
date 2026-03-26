@@ -750,6 +750,10 @@ void Esp32UsbTransport::handle_new_device(uint8_t dev_addr) {
                 if (ret == ESP_OK) {
                     connected_ = true;
                     ESP_LOGI(ESP32_USB_TAG, "UPS device successfully configured and ready");
+                    // Start interrupt IN immediately so reports are buffered while the
+                    // protocol layer initialises (the UPS sends its first burst ~1.4 s
+                    // after USB connect – earlier than the first update() call).
+                    start_interrupt_in();
                     return;
                 }
             }
