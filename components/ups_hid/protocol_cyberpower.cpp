@@ -100,11 +100,11 @@ bool CyberPowerProtocol::read_data(UpsData &data) {
   }
 
   // Read input voltage (Report 0x0f)
-  HidReport input_voltage_report;
-  if (read_hid_report(INPUT_VOLTAGE_REPORT_ID, input_voltage_report)) {
-    parse_input_voltage_report(input_voltage_report, data);
-    success = true;
-  }
+  // HidReport input_voltage_report;
+  // if (read_hid_report(INPUT_VOLTAGE_REPORT_ID, input_voltage_report)) {
+  //   parse_input_voltage_report(input_voltage_report, data);
+  //   success = true;
+  // }
 
   // Read output voltage (Report 0x12)
   HidReport output_voltage_report;
