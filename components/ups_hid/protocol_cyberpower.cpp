@@ -590,3 +590,24 @@ std::string CyberPowerProtocol::clean_firmware_string(const std::string &raw) {
 
 }  // namespace ups_hid
 }  // namespace esphome
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Factory registration
+// ─────────────────────────────────────────────────────────────────────────────
+#include "protocol_factory.h"
+
+namespace esphome {
+namespace ups_hid {
+
+static std::unique_ptr<UpsProtocolBase> create_cyberpower_protocol(UpsHidComponent *parent) {
+  return std::make_unique<CyberPowerProtocol>(parent);
+}
+
+}  // namespace ups_hid
+}  // namespace esphome
+
+// Register CyberPower protocol for vendor ID 0x0764
+REGISTER_UPS_PROTOCOL_FOR_VENDOR(0x0764, cyberpower_hid_protocol,
+                                 esphome::ups_hid::create_cyberpower_protocol,
+                                 "CyberPower HID",
+                                 "CyberPower HID interrupt IN protocol", 100);
