@@ -427,7 +427,7 @@ esp_err_t Esp32UsbTransport::setup_usb_host() {
         usb_tasks_running_ = true;
         
         // Create USB Host Library task first
-        BaseType_t task_created = xTaskCreate(usb_lib_task, "usb_lib_task", 4096, this, 2, &usb_lib_task_handle_);
+        BaseType_t task_created = xTaskCreate(usb_lib_task, "usb_lib_task", 4096, this, 3, &usb_lib_task_handle_);
         if (task_created != pdTRUE) {
             ESP_LOGE(ESP32_USB_TAG, "Failed to create USB Host Library task");
             usb_tasks_running_ = false;
@@ -438,7 +438,7 @@ esp_err_t Esp32UsbTransport::setup_usb_host() {
         vTaskDelay(pdMS_TO_TICKS(100));
         
         // Create USB client task
-        task_created = xTaskCreate(usb_client_task, "usb_client_task", 6144, this, 3, &usb_client_task_handle_);
+        task_created = xTaskCreate(usb_client_task, "usb_client_task", 6144, this, 2, &usb_client_task_handle_);
         if (task_created != pdTRUE) {
             ESP_LOGE(ESP32_USB_TAG, "Failed to create USB client task");
             usb_tasks_running_ = false;
