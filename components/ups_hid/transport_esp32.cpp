@@ -488,7 +488,7 @@ esp_err_t Esp32UsbTransport::find_and_open_device() {
     // Register USB client in asynchronous mode for event-driven device detection
     usb_host_client_config_t client_config = {
         .is_synchronous = false,  // Use asynchronous mode for USB_HOST_CLIENT_EVENT_NEW_DEV events
-        .max_num_event_msg = 5,
+        .max_num_event_msg = 32,
         .async = {
             .client_event_callback = usb_client_event_callback,
             .callback_arg = this
@@ -869,7 +869,7 @@ void Esp32UsbTransport::usb_client_task(void* arg) {
         }
         
         // Small delay to prevent busy-waiting
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // vTaskDelay(pdMS_TO_TICKS(10));
     }
     
     ESP_LOGI(ESP32_USB_TAG, "USB client task stopping");
