@@ -955,9 +955,23 @@ void Esp32UsbTransport::interrupt_in_callback(usb_transfer_t* transfer) {
         ESP_LOGD(ESP32_USB_TAG, "Interrupt IN transfer status: %d", (int)transfer->status);
     }
 
-    if (transport->interrupt_in_active_.load()) {
-        usb_host_transfer_submit(transfer);
+    // Only resubmit if still active AND the transfer completed successfully.
+    // A non-COMPLETED status (CANCELED, NO_DEVICE, ERROR, etc.) means the
+    // device is going away; attempting to resubmit in that state produces
+    // ESP_ERR_INVALID_STATE and triggers a spurious USB disconnect event.
+    if (transport->interrupt_in_active_.load() &&
+        transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
+        esp_err_t ret = usb_host_transfer_submit(transfer);
+        if (ret != ESP_OK) {
+            ESP_LOGW(ESP32_USB_TAG, "Interrupt IN resubmit failed (%s) - stopping",
+                     esp_err_to_name(ret));
+            transport->interrupt_in_active_ = false;
+            usb_host_transfer_free(transfer);
+            transport->interrupt_transfer_ = nullptr;
+        }
     } else {
+        // Inactive or transfer error: free and stop.
+        transport->interrupt_in_active_ = false;
         usb_host_transfer_free(transfer);
         transport->interrupt_transfer_ = nullptr;
     }

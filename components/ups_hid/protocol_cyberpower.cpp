@@ -18,7 +18,9 @@ static const char *const CP_TAG = "ups_hid.cyberpower_hid";
 
 // ── Interrupt report drain settings ──────────────────────────────────────────
 // How long to wait for the FIRST report in each read_data() call (ms).
-static const uint32_t FIRST_REPORT_TIMEOUT_MS  = 500;
+// The CyberPower UPS takes ~1.4 s after USB connect before it begins
+// sending interrupt IN reports (observed on Linux).  Use 3 s to be safe.
+static const uint32_t FIRST_REPORT_TIMEOUT_MS  = 3000;
 // How long to wait for ADDITIONAL reports after the first (ms).
 // Short so we drain the whole burst without blocking too long.
 static const uint32_t NEXT_REPORT_TIMEOUT_MS   = 50;
