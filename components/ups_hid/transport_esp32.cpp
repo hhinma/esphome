@@ -698,73 +698,92 @@ void Esp32UsbTransport::usb_client_event_callback(const usb_host_client_event_ms
 
 void Esp32UsbTransport::handle_new_device(uint8_t dev_addr) {
     ESP_LOGI(ESP32_USB_TAG, "Handling new USB device at address %d", dev_addr);
-    
-    std::lock_guard<std::mutex> lock(device_mutex_);
-    
-    // Check if we already have a device connected
-    if (device_.dev_hdl != nullptr) {
-        ESP_LOGW(ESP32_USB_TAG, "Device already connected - skipping new device at address %d", dev_addr);
-        return;
-    }
-    
-    // Open the device
-    esp_err_t ret = usb_host_device_open(device_.client_hdl, dev_addr, &device_.dev_hdl);
-    if (ret != ESP_OK) {
-        ESP_LOGE(ESP32_USB_TAG, "Failed to open device at address %d: %s", dev_addr, esp_err_to_name(ret));
-        return;
-    }
-    
-    ESP_LOGI(ESP32_USB_TAG, "Successfully opened USB device at address %d", dev_addr);
-    
-    // Get device information
-    usb_device_info_t dev_info;
-    ret = usb_host_device_info(device_.dev_hdl, &dev_info);
-    if (ret != ESP_OK) {
-        ESP_LOGE(ESP32_USB_TAG, "Failed to get device info: %s", esp_err_to_name(ret));
-        usb_host_device_close(device_.client_hdl, device_.dev_hdl);
-        device_.dev_hdl = nullptr;
-        return;
-    }
-    
-    device_.address = dev_addr;
-    device_.speed = dev_info.speed;
-    
-    // Get device descriptor to extract VID/PID
-    const usb_device_desc_t* device_desc;
-    ret = usb_host_get_device_descriptor(device_.dev_hdl, &device_desc);
-    if (ret == ESP_OK) {
-        device_.vendor_id = device_desc->idVendor;
-        device_.product_id = device_desc->idProduct;
-        
-        ESP_LOGI(ESP32_USB_TAG, "USB device opened: VID=0x%04X, PID=0x%04X, Speed=%d", 
-                 device_.vendor_id, device_.product_id, dev_info.speed);
-        
-        // Check if this is a UPS device (HID class)
-        if (device_desc->bDeviceClass == USB_CLASS_HID || 
-            device_desc->bDeviceClass == 0x00) { // Device class defined at interface level
-            
-            // Try to claim HID interface and find endpoints
-            ret = claim_interface();
-            if (ret == ESP_OK) {
-                ret = find_endpoints();
-                if (ret == ESP_OK) {
-                    connected_ = true;
-                    ESP_LOGI(ESP32_USB_TAG, "UPS device successfully configured and ready");
-                    // Start interrupt IN immediately so reports are buffered while the
-                    // protocol layer initialises (the UPS sends its first burst ~1.4 s
-                    // after USB connect – earlier than the first update() call).
-                    start_interrupt_in();
-                    return;
-                }
-            }
-        } else {
-            ESP_LOGW(ESP32_USB_TAG, "Connected device is not a HID device (class=0x%02X)", device_desc->bDeviceClass);
+
+    bool device_ready = false;
+    {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+
+        // Check if we already have a device connected
+        if (device_.dev_hdl != nullptr) {
+            ESP_LOGW(ESP32_USB_TAG, "Device already connected - skipping new device at address %d", dev_addr);
+            return;
         }
+
+        // Open the device
+        esp_err_t ret = usb_host_device_open(device_.client_hdl, dev_addr, &device_.dev_hdl);
+        if (ret != ESP_OK) {
+            ESP_LOGE(ESP32_USB_TAG, "Failed to open device at address %d: %s", dev_addr, esp_err_to_name(ret));
+            return;
+        }
+
+        ESP_LOGI(ESP32_USB_TAG, "Successfully opened USB device at address %d", dev_addr);
+
+        // Get device information
+        usb_device_info_t dev_info;
+        ret = usb_host_device_info(device_.dev_hdl, &dev_info);
+        if (ret != ESP_OK) {
+            ESP_LOGE(ESP32_USB_TAG, "Failed to get device info: %s", esp_err_to_name(ret));
+            usb_host_device_close(device_.client_hdl, device_.dev_hdl);
+            device_.dev_hdl = nullptr;
+            return;
+        }
+
+        device_.address = dev_addr;
+        device_.speed = dev_info.speed;
+
+        // Get device descriptor to extract VID/PID
+        const usb_device_desc_t* device_desc;
+        ret = usb_host_get_device_descriptor(device_.dev_hdl, &device_desc);
+        if (ret == ESP_OK) {
+            device_.vendor_id = device_desc->idVendor;
+            device_.product_id = device_desc->idProduct;
+
+            ESP_LOGI(ESP32_USB_TAG, "USB device opened: VID=0x%04X, PID=0x%04X, Speed=%d",
+                     device_.vendor_id, device_.product_id, dev_info.speed);
+
+            // Check if this is a UPS device (HID class)
+            if (device_desc->bDeviceClass == USB_CLASS_HID ||
+                device_desc->bDeviceClass == 0x00) { // Device class defined at interface level
+
+                // Try to claim HID interface and find endpoints
+                ret = claim_interface();
+                if (ret == ESP_OK) {
+                    ret = find_endpoints();
+                    if (ret == ESP_OK) {
+                        connected_ = true;
+                        device_ready = true;
+                        // HID init and interrupt IN are started AFTER the mutex is
+                        // released (below) to avoid deadlocks: submit_control_transfer()
+                        // also acquires device_mutex_.
+                    }
+                }
+            } else {
+                ESP_LOGW(ESP32_USB_TAG, "Connected device is not a HID device (class=0x%02X)", device_desc->bDeviceClass);
+            }
+        }
+
+        if (!device_ready) {
+            // Clean up on failure
+            usb_host_device_close(device_.client_hdl, device_.dev_hdl);
+            device_.dev_hdl = nullptr;
+        }
+    } // ── device_mutex_ released ────────────────────────────────────────────
+
+    if (device_ready) {
+        ESP_LOGI(ESP32_USB_TAG, "UPS device successfully configured and ready");
+
+        // Send mandatory HID class initialisation requests.
+        // Many HID UPS devices (CyberPower included) do not start pushing
+        // interrupt IN reports until the host has completed the standard HID
+        // enumeration sequence.  Without these the UPS times out (~7-8 s) and
+        // resets its USB port.  Failures are logged but not fatal.
+        read_hid_report_descriptor();
+        send_hid_set_idle();
+
+        // Auto-start interrupt IN so reports are buffered from the very first
+        // moment the device is ready, before the protocol layer initialises.
+        start_interrupt_in();
     }
-    
-    // Clean up on failure
-    usb_host_device_close(device_.client_hdl, device_.dev_hdl);
-    device_.dev_hdl = nullptr;
 }
 
 void Esp32UsbTransport::handle_device_gone(usb_device_handle_t dev_hdl) {
@@ -882,6 +901,84 @@ void Esp32UsbTransport::usb_client_task(void* arg) {
     vTaskDelete(nullptr);
 }
 
+// ── HID class initialisation ─────────────────────────────────────────────────
+// "Fire-and-forget" callback for one-shot control transfers where we only care
+// that the setup packet is sent, not about the response data.
+void Esp32UsbTransport::fire_and_forget_ctrl_cb(usb_transfer_t* transfer) {
+    usb_host_transfer_free(transfer);
+}
+
+esp_err_t Esp32UsbTransport::read_hid_report_descriptor() {
+    // GET_DESCRIPTOR(HID Report): Standard | Interface | IN, type=0x22, idx=0
+    // Many HID devices will not start sending interrupt IN reports until the
+    // host has requested the report descriptor.  We don't need to parse it –
+    // merely issuing the request satisfies the device's state machine.
+    if (!device_.dev_hdl) return ESP_ERR_INVALID_STATE;
+    static const uint16_t DESC_BUF = 256;
+    usb_transfer_t* xfer = nullptr;
+    esp_err_t ret = usb_host_transfer_alloc(sizeof(usb_setup_packet_t) + DESC_BUF, 0, &xfer);
+    if (ret != ESP_OK) return ret;
+
+    auto* s = reinterpret_cast<usb_setup_packet_t*>(xfer->data_buffer);
+    s->bmRequestType = 0x81;            // Standard | Interface | IN
+    s->bRequest      = 0x06;            // GET_DESCRIPTOR
+    s->wValue        = 0x2200;          // type=HID Report (0x22), index=0
+    s->wIndex        = device_.interface_num;
+    s->wLength       = DESC_BUF;
+    memset(xfer->data_buffer + sizeof(usb_setup_packet_t), 0, DESC_BUF);
+
+    xfer->device_handle     = device_.dev_hdl;
+    xfer->bEndpointAddress  = 0;
+    xfer->callback          = fire_and_forget_ctrl_cb;
+    xfer->context           = nullptr;
+    xfer->num_bytes         = sizeof(usb_setup_packet_t) + DESC_BUF;
+    xfer->timeout_ms        = 500;
+
+    ret = usb_host_transfer_submit_control(device_.client_hdl, xfer);
+    if (ret != ESP_OK) {
+        ESP_LOGW(ESP32_USB_TAG, "GET_DESCRIPTOR(HID) failed (%s), continuing", esp_err_to_name(ret));
+        usb_host_transfer_free(xfer);
+    } else {
+        ESP_LOGD(ESP32_USB_TAG, "GET_DESCRIPTOR(HID Report) submitted");
+    }
+    return ESP_OK;  // non-fatal
+}
+
+esp_err_t Esp32UsbTransport::send_hid_set_idle() {
+    // SET_IDLE: HID class | Interface | OUT, rate=0 (only send on change)
+    // Informs the device that the host is ready to receive reports and
+    // suppresses redundant repetitions.  Required by the HID spec and checked
+    // by many devices before they begin pushing interrupt IN data.
+    if (!device_.dev_hdl) return ESP_ERR_INVALID_STATE;
+    usb_transfer_t* xfer = nullptr;
+    esp_err_t ret = usb_host_transfer_alloc(sizeof(usb_setup_packet_t), 0, &xfer);
+    if (ret != ESP_OK) return ret;
+
+    auto* s = reinterpret_cast<usb_setup_packet_t*>(xfer->data_buffer);
+    s->bmRequestType = 0x21;            // Class | Interface | OUT
+    s->bRequest      = 0x0A;            // SET_IDLE
+    s->wValue        = 0x0000;          // rate=0 (suppress repeats), report=0 (all)
+    s->wIndex        = device_.interface_num;
+    s->wLength       = 0;
+
+    xfer->device_handle     = device_.dev_hdl;
+    xfer->bEndpointAddress  = 0;
+    xfer->callback          = fire_and_forget_ctrl_cb;
+    xfer->context           = nullptr;
+    xfer->num_bytes         = sizeof(usb_setup_packet_t);
+    xfer->timeout_ms        = 500;
+
+    ret = usb_host_transfer_submit_control(device_.client_hdl, xfer);
+    if (ret != ESP_OK) {
+        ESP_LOGW(ESP32_USB_TAG, "SET_IDLE failed (%s), continuing", esp_err_to_name(ret));
+        usb_host_transfer_free(xfer);
+    } else {
+        ESP_LOGI(ESP32_USB_TAG, "HID SET_IDLE submitted to interface %d", device_.interface_num);
+    }
+    return ESP_OK;  // non-fatal
+}
+
+// ── Interrupt IN ─────────────────────────────────────────────────────────────
 esp_err_t Esp32UsbTransport::start_interrupt_in() {
     if (!device_.dev_hdl || device_.ep_in == 0) {
         ESP_LOGE(ESP32_USB_TAG, "Cannot start interrupt IN: device not ready or no IN endpoint");
@@ -900,7 +997,8 @@ esp_err_t Esp32UsbTransport::start_interrupt_in() {
     uint16_t pkt_size = device_.max_packet_size_in;
     if (pkt_size == 0 || pkt_size > 64) pkt_size = 8;
 
-    esp_err_t ret = usb_host_transfer_alloc(pkt_size, 0, &interrupt_transfer_);
+    usb_transfer_t* xfer = nullptr;
+    esp_err_t ret = usb_host_transfer_alloc(pkt_size, 0, &xfer);
     if (ret != ESP_OK) {
         ESP_LOGE(ESP32_USB_TAG, "Failed to allocate interrupt transfer: %s", esp_err_to_name(ret));
         vQueueDelete(interrupt_queue_);
@@ -908,20 +1006,23 @@ esp_err_t Esp32UsbTransport::start_interrupt_in() {
         return ret;
     }
 
-    interrupt_transfer_->device_handle = device_.dev_hdl;
-    interrupt_transfer_->bEndpointAddress = device_.ep_in;
-    interrupt_transfer_->callback = interrupt_in_callback;
-    interrupt_transfer_->context = this;
-    interrupt_transfer_->num_bytes = pkt_size;
-    interrupt_transfer_->timeout_ms = 0;
+    xfer->device_handle    = device_.dev_hdl;
+    xfer->bEndpointAddress = device_.ep_in;
+    xfer->callback         = interrupt_in_callback;
+    xfer->context          = this;
+    xfer->num_bytes        = pkt_size;
+    xfer->timeout_ms       = 0;
 
+    // Store the pointer atomically BEFORE submitting so the callback's stale
+    // check is always consistent.
+    interrupt_transfer_.store(xfer);
     interrupt_in_active_ = true;
-    ret = usb_host_transfer_submit(interrupt_transfer_);
+    ret = usb_host_transfer_submit(xfer);
     if (ret != ESP_OK) {
         ESP_LOGE(ESP32_USB_TAG, "Failed to submit interrupt IN transfer: %s", esp_err_to_name(ret));
         interrupt_in_active_ = false;
-        usb_host_transfer_free(interrupt_transfer_);
-        interrupt_transfer_ = nullptr;
+        interrupt_transfer_.store(nullptr);
+        usb_host_transfer_free(xfer);
         vQueueDelete(interrupt_queue_);
         interrupt_queue_ = nullptr;
         return ret;
@@ -934,7 +1035,10 @@ esp_err_t Esp32UsbTransport::start_interrupt_in() {
 
 esp_err_t Esp32UsbTransport::stop_interrupt_in() {
     interrupt_in_active_ = false;
-    // The interrupt_transfer_ is freed in interrupt_in_callback when it detects !interrupt_in_active_
+    // Null the pointer BEFORE the new device connects so that any in-flight
+    // callback from the old session sees a mismatch and frees itself without
+    // touching the new session's state (stale-callback guard).
+    interrupt_transfer_.store(nullptr);
     if (interrupt_queue_) {
         vQueueDelete(interrupt_queue_);
         interrupt_queue_ = nullptr;
@@ -945,6 +1049,14 @@ esp_err_t Esp32UsbTransport::stop_interrupt_in() {
 
 void Esp32UsbTransport::interrupt_in_callback(usb_transfer_t* transfer) {
     auto* transport = static_cast<Esp32UsbTransport*>(transfer->context);
+
+    // Stale-callback guard: if this transfer is no longer the registered one
+    // (stop_interrupt_in() nulled the pointer before a new device connected),
+    // just free it and bail so the new session's state is left untouched.
+    if (transport->interrupt_transfer_.load() != transfer) {
+        usb_host_transfer_free(transfer);
+        return;
+    }
 
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED && transfer->actual_num_bytes > 0) {
         InterruptReportItem item;
@@ -971,13 +1083,13 @@ void Esp32UsbTransport::interrupt_in_callback(usb_transfer_t* transfer) {
                      esp_err_to_name(ret));
             transport->interrupt_in_active_ = false;
             usb_host_transfer_free(transfer);
-            transport->interrupt_transfer_ = nullptr;
+            transport->interrupt_transfer_.store(nullptr);
         }
     } else {
         // Inactive or transfer error: free and stop.
         transport->interrupt_in_active_ = false;
         usb_host_transfer_free(transfer);
-        transport->interrupt_transfer_ = nullptr;
+        transport->interrupt_transfer_.store(nullptr);
     }
 }
 

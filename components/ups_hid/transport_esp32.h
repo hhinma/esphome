@@ -88,9 +88,12 @@ private:
         uint8_t data[8];
     };
     QueueHandle_t interrupt_queue_{nullptr};
-    usb_transfer_t* interrupt_transfer_{nullptr};
+    // Use atomic pointer so the stale-callback guard in interrupt_in_callback()
+    // can safely compare it against the arriving transfer without a mutex.
+    std::atomic<usb_transfer_t*> interrupt_transfer_{nullptr};
     std::atomic<bool> interrupt_in_active_{false};
     static void interrupt_in_callback(usb_transfer_t* transfer);
+    static void fire_and_forget_ctrl_cb(usb_transfer_t* transfer);
 
     // Private methods
     static void usb_lib_task(void* arg);
@@ -105,6 +108,10 @@ private:
     esp_err_t find_and_open_device();
     esp_err_t claim_interface();
     esp_err_t find_endpoints();
+    // HID class initialisation – sent immediately after interface claim so
+    // the device starts pushing interrupt IN reports (required by most HID UPS).
+    esp_err_t send_hid_set_idle();
+    esp_err_t read_hid_report_descriptor();
     
     void set_last_error(const std::string& error);
     esp_err_t submit_control_transfer(uint8_t bmRequestType, uint8_t bRequest,
