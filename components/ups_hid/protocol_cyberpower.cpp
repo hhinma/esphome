@@ -271,6 +271,14 @@ bool CyberPowerProtocol::read_hid_report(uint8_t report_id, HidReport &report) {
   
   // Log the specific error for Feature Report
   ESP_LOGD(CP_TAG, "Feature Report 0x%02X failed: %s", report_id, esp_err_to_name(ret));
+
+  // ESP_FAIL means the pipe timed out / stalled - the HCD pipe is now in a bad state.
+  // Attempting a second request will trigger ESP_ERR_INVALID_STATE and kill the USB session.
+  // Do NOT fall through to Input Report in this case.
+  if (ret == ESP_FAIL) {
+    ESP_LOGD(CP_TAG, "Report 0x%02X timed out - aborting to protect USB pipe state", report_id);
+    return false;
+  }
   
   // Check connection again before trying Input report
   if (!parent_->is_device_connected()) {
