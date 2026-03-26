@@ -142,6 +142,21 @@ bool UpsHidComponent::is_connected() const {
   return transport_ && transport_->is_connected();
 }
 
+esp_err_t UpsHidComponent::start_interrupt_in() {
+  if (!transport_) return ESP_ERR_INVALID_STATE;
+  return transport_->start_interrupt_in();
+}
+
+esp_err_t UpsHidComponent::stop_interrupt_in() {
+  if (!transport_) return ESP_ERR_INVALID_STATE;
+  return transport_->stop_interrupt_in();
+}
+
+bool UpsHidComponent::read_interrupt_report(uint8_t* data, size_t* len, uint32_t timeout_ms) {
+  if (!transport_) return false;
+  return transport_->read_interrupt_report(data, len, timeout_ms);
+}
+
 uint16_t UpsHidComponent::get_vendor_id() const {
   return transport_ ? transport_->get_vendor_id() : defaults::AUTO_DETECT_VENDOR_ID;
 }

@@ -34,18 +34,23 @@ public:
     uint16_t get_vendor_id() const override;
     uint16_t get_product_id() const override;
     
-    esp_err_t hid_get_report(uint8_t report_type, uint8_t report_id, 
-                           uint8_t* data, size_t* data_len, 
+    esp_err_t hid_get_report(uint8_t report_type, uint8_t report_id,
+                           uint8_t* data, size_t* data_len,
                            uint32_t timeout_ms = 1000) override;
-    
+
     esp_err_t hid_set_report(uint8_t report_type, uint8_t report_id,
                            const uint8_t* data, size_t data_len,
                            uint32_t timeout_ms = 1000) override;
-    
-    esp_err_t get_string_descriptor(uint8_t string_index, 
+
+    esp_err_t get_string_descriptor(uint8_t string_index,
                                   std::string& result) override;
-    
+
     std::string get_last_error() const override;
+
+    // Interrupt IN endpoint support
+    esp_err_t start_interrupt_in() override;
+    esp_err_t stop_interrupt_in() override;
+    bool read_interrupt_report(uint8_t* data, size_t* len, uint32_t timeout_ms) override;
 
 private:
     // USB device structure
@@ -76,7 +81,17 @@ private:
     // Error handling
     mutable std::mutex error_mutex_;
     std::string last_error_;
-    
+
+    // Interrupt IN endpoint support
+    struct InterruptReportItem {
+        uint8_t len;
+        uint8_t data[8];
+    };
+    QueueHandle_t interrupt_queue_{nullptr};
+    usb_transfer_t* interrupt_transfer_{nullptr};
+    std::atomic<bool> interrupt_in_active_{false};
+    static void interrupt_in_callback(usb_transfer_t* transfer);
+
     // Private methods
     static void usb_lib_task(void* arg);
     static void usb_client_task(void* arg);

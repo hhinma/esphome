@@ -226,6 +226,11 @@ namespace esphome
       esp_err_t usb_get_string_descriptor(uint8_t string_index, std::string& result) {
         return get_string_descriptor(string_index, result);
       }
+
+      // Interrupt IN support (for devices that push data via interrupt endpoint)
+      esp_err_t start_interrupt_in();
+      esp_err_t stop_interrupt_in();
+      bool read_interrupt_report(uint8_t* data, size_t* len, uint32_t timeout_ms);
       
 
     private:

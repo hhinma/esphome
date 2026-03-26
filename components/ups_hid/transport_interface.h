@@ -44,6 +44,11 @@ public:
     
     // Error information
     virtual std::string get_last_error() const = 0;
+
+    // Interrupt IN endpoint support (optional - for devices that push data via interrupt)
+    virtual esp_err_t start_interrupt_in() { return ESP_ERR_NOT_SUPPORTED; }
+    virtual esp_err_t stop_interrupt_in() { return ESP_OK; }
+    virtual bool read_interrupt_report(uint8_t* data, size_t* len, uint32_t timeout_ms) { return false; }
 };
 
 // Forward declaration - implementation in usb_transport_factory.h

@@ -765,9 +765,11 @@ void Esp32UsbTransport::handle_new_device(uint8_t dev_addr) {
 
 void Esp32UsbTransport::handle_device_gone(usb_device_handle_t dev_hdl) {
     ESP_LOGI(ESP32_USB_TAG, "Handling USB device disconnection");
-    
+
+    stop_interrupt_in();
+
     std::lock_guard<std::mutex> lock(device_mutex_);
-    
+
     if (device_.dev_hdl == dev_hdl) {
         connected_ = false;
         
@@ -874,6 +876,103 @@ void Esp32UsbTransport::usb_client_task(void* arg) {
     
     ESP_LOGI(ESP32_USB_TAG, "USB client task stopping");
     vTaskDelete(nullptr);
+}
+
+esp_err_t Esp32UsbTransport::start_interrupt_in() {
+    if (!device_.dev_hdl || device_.ep_in == 0) {
+        ESP_LOGE(ESP32_USB_TAG, "Cannot start interrupt IN: device not ready or no IN endpoint");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (interrupt_in_active_.load()) {
+        return ESP_OK;
+    }
+
+    interrupt_queue_ = xQueueCreate(32, sizeof(InterruptReportItem));
+    if (!interrupt_queue_) {
+        ESP_LOGE(ESP32_USB_TAG, "Failed to create interrupt report queue");
+        return ESP_ERR_NO_MEM;
+    }
+
+    uint16_t pkt_size = device_.max_packet_size_in;
+    if (pkt_size == 0 || pkt_size > 64) pkt_size = 8;
+
+    esp_err_t ret = usb_host_transfer_alloc(pkt_size, 0, &interrupt_transfer_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(ESP32_USB_TAG, "Failed to allocate interrupt transfer: %s", esp_err_to_name(ret));
+        vQueueDelete(interrupt_queue_);
+        interrupt_queue_ = nullptr;
+        return ret;
+    }
+
+    interrupt_transfer_->device_handle = device_.dev_hdl;
+    interrupt_transfer_->bEndpointAddress = device_.ep_in;
+    interrupt_transfer_->callback = interrupt_in_callback;
+    interrupt_transfer_->context = this;
+    interrupt_transfer_->num_bytes = pkt_size;
+    interrupt_transfer_->timeout_ms = 0;
+
+    interrupt_in_active_ = true;
+    ret = usb_host_transfer_submit(interrupt_transfer_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(ESP32_USB_TAG, "Failed to submit interrupt IN transfer: %s", esp_err_to_name(ret));
+        interrupt_in_active_ = false;
+        usb_host_transfer_free(interrupt_transfer_);
+        interrupt_transfer_ = nullptr;
+        vQueueDelete(interrupt_queue_);
+        interrupt_queue_ = nullptr;
+        return ret;
+    }
+
+    ESP_LOGI(ESP32_USB_TAG, "Interrupt IN started on endpoint 0x%02X (max_pkt=%d)",
+             device_.ep_in, pkt_size);
+    return ESP_OK;
+}
+
+esp_err_t Esp32UsbTransport::stop_interrupt_in() {
+    interrupt_in_active_ = false;
+    // The interrupt_transfer_ is freed in interrupt_in_callback when it detects !interrupt_in_active_
+    if (interrupt_queue_) {
+        vQueueDelete(interrupt_queue_);
+        interrupt_queue_ = nullptr;
+    }
+    ESP_LOGI(ESP32_USB_TAG, "Interrupt IN stopped");
+    return ESP_OK;
+}
+
+void Esp32UsbTransport::interrupt_in_callback(usb_transfer_t* transfer) {
+    auto* transport = static_cast<Esp32UsbTransport*>(transfer->context);
+
+    if (transfer->status == USB_TRANSFER_STATUS_COMPLETED && transfer->actual_num_bytes > 0) {
+        InterruptReportItem item;
+        item.len = (uint8_t)std::min((size_t)transfer->actual_num_bytes, sizeof(item.data));
+        memcpy(item.data, transfer->data_buffer, item.len);
+
+        if (transport->interrupt_queue_) {
+            // Non-blocking send: drop oldest if full (queue depth 32 should be ample)
+            xQueueSend(transport->interrupt_queue_, &item, 0);
+        }
+    } else if (transfer->status != USB_TRANSFER_STATUS_COMPLETED) {
+        ESP_LOGD(ESP32_USB_TAG, "Interrupt IN transfer status: %d", (int)transfer->status);
+    }
+
+    if (transport->interrupt_in_active_.load()) {
+        usb_host_transfer_submit(transfer);
+    } else {
+        usb_host_transfer_free(transfer);
+        transport->interrupt_transfer_ = nullptr;
+    }
+}
+
+bool Esp32UsbTransport::read_interrupt_report(uint8_t* data, size_t* len, uint32_t timeout_ms) {
+    if (!interrupt_queue_) return false;
+
+    InterruptReportItem item;
+    if (xQueueReceive(interrupt_queue_, &item, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
+        *len = item.len;
+        memcpy(data, item.data, item.len);
+        return true;
+    }
+    return false;
 }
 
 } // namespace ups_hid
