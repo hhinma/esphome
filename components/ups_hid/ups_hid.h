@@ -141,7 +141,7 @@ namespace esphome
 #endif
       void register_delay_number(class UpsDelayNumber *number);
 
-      
+
       // Protocol access for button components
       UpsProtocolBase* get_active_protocol() const { return active_protocol_.get(); }
 
@@ -279,7 +279,7 @@ namespace esphome
       bool send_command(const std::vector<uint8_t> &cmd, std::vector<uint8_t> &response, uint32_t timeout_ms = 1000);
       std::string bytes_to_string(const std::vector<uint8_t> &data);
     };
-
+    //
 
   } // namespace ups_hid
 } // namespace esphome
