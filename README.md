@@ -2,12 +2,12 @@
 
 A collection of ESPHome components for various hardware integrations and monitoring solutions.  Derived from bullshit's esphome-components repository to address issues with cyberpower SL750U UPS devices.  At some point, I might add this as a separate component, but for now, I just wanted it working.   
 
-## The cyberpower problem.  The original polling implementation does not work properly with the SL750U.  I can't comment on other Cyberpower UPSs since I do not have any to test with.
+### The cyberpower problem.  The original polling implementation does not work properly with the SL750U.  I can't comment on other Cyberpower UPSs since I do not have any to test with.
 - Replaces polling with Interrupt IN endpoint.
 - Changes ONLINE/ON_BATTERY binary sensor to reflect the data available in the interrupt implementation
 - Changes to device classes for online and on_battery sensors to provide meaningful behavior.  The original on_battery sensor translated into "Low" when the UPS was on battery in Home Assistant, which is not useful.
 
-## Summary
+### Summary
 - transport_interface.h  - Added three default-no-op virtual methods to IUsbTransport:
 - start_interrupt_in() — start listening on the USB HID interrupt IN endpoint
 - stop_interrupt_in() — stop and clean up
