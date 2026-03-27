@@ -328,11 +328,11 @@ void UpsHidComponent::update_sensors() {
       value = ups_data_.battery.runtime_low;
     } else if (type == sensor_type::UPS_REALPOWER_NOMINAL && !std::isnan(ups_data_.power.realpower_nominal)) {
       value = ups_data_.power.realpower_nominal;
-    } else if (type == sensor_type::UPS_DELAY_SHUTDOWN && !std::isnan(ups_data_.config.delay_shutdown)) {
+    } else if (type == sensor_type::UPS_DELAY_SHUTDOWN && ups_data_.config.delay_shutdown >= 0) {
       value = ups_data_.config.delay_shutdown;
-    } else if (type == sensor_type::UPS_DELAY_START && !std::isnan(ups_data_.config.delay_start)) {
+    } else if (type == sensor_type::UPS_DELAY_START && ups_data_.config.delay_start >= 0) {
       value = ups_data_.config.delay_start;
-    } else if (type == sensor_type::UPS_DELAY_REBOOT && !std::isnan(ups_data_.config.delay_reboot)) {
+    } else if (type == sensor_type::UPS_DELAY_REBOOT && ups_data_.config.delay_reboot >= 0) {
       value = ups_data_.config.delay_reboot;
     } else if (type == sensor_type::UPS_TIMER_REBOOT && ups_data_.test.timer_reboot != -1) {
       value = ups_data_.test.timer_reboot;

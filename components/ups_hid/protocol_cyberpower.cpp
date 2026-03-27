@@ -144,7 +144,9 @@ bool CyberPowerProtocol::read_data(UpsData &data) {
   }
 
   if (!success) {
-    ESP_LOGW(CP_TAG, "No interrupt reports received from UPS");
+    // Queue was empty within the timeout – expected after a burst is fully
+    // drained, or during a quiet polling interval.  Not a real error.
+    ESP_LOGV(CP_TAG, "No interrupt reports received from UPS (queue empty)");
     return false;
   }
 
@@ -345,50 +347,65 @@ void CyberPowerProtocol::parse_int_nominal_voltage(const uint8_t* data, size_t l
 // read_device_strings() — USB string descriptors (serial, firmware, model)
 // ─────────────────────────────────────────────────────────────────────────────
 void CyberPowerProtocol::read_device_strings(UpsData &data) {
-  // Only read once (non-empty means already populated).
-  if (!data.device.manufacturer.empty() && !data.device.serial_number.empty()) return;
+  // ups_data_.reset() is called before every read_data(), so data.device.*
+  // fields are always empty on entry.  Use the protocol-level cache so we only
+  // issue USB GET_STRING_DESCRIPTOR requests once per device connection.
+  if (strings_initialized_) {
+    data.device.manufacturer    = cached_manufacturer_;
+    data.device.model           = cached_model_;
+    data.device.serial_number   = cached_serial_;
+    data.device.firmware_version = cached_firmware_;
+    return;
+  }
 
-  // Manufacturer: string descriptor index 3 (CPS)
-  if (data.device.manufacturer.empty()) {
+  // Manufacturer: string descriptor index 3 ("CPS")
+  {
     std::string s;
     if (parent_->usb_get_string_descriptor(3, s) == ESP_OK && !s.empty()) {
-      data.device.manufacturer = s;
+      cached_manufacturer_ = s;
       ESP_LOGI(CP_TAG, "Manufacturer: \"%s\"", s.c_str());
     }
   }
 
   // Model: string descriptor index 1
-  if (data.device.model.empty()) {
+  {
     std::string s;
     if (parent_->usb_get_string_descriptor(1, s) == ESP_OK && !s.empty()) {
-      data.device.model = s;
+      cached_model_ = s;
       ESP_LOGI(CP_TAG, "Model: \"%s\"", s.c_str());
     }
   }
 
-  // Serial number: try string descriptor index 2
-  if (data.device.serial_number.empty()) {
+  // Serial number: string descriptor index 2 (not present on all models)
+  {
     std::string s;
     if (parent_->usb_get_string_descriptor(2, s) == ESP_OK && !s.empty()) {
-      data.device.serial_number = s;
+      cached_serial_ = s;
       ESP_LOGI(CP_TAG, "Serial: \"%s\"", s.c_str());
+    } else {
+      ESP_LOGD(CP_TAG, "Serial number not available via string descriptor 2");
     }
   }
 
   // Firmware: try string descriptor indices 5, 4, 6 in order
-  if (data.device.firmware_version.empty()) {
-    for (uint8_t idx : {5u, 4u, 6u}) {
-      std::string s;
-      if (parent_->usb_get_string_descriptor(idx, s) == ESP_OK && !s.empty()) {
-        std::string cleaned = clean_firmware_string(s);
-        if (!cleaned.empty()) {
-          data.device.firmware_version = cleaned;
-          ESP_LOGI(CP_TAG, "Firmware (str idx %d): \"%s\"", idx, cleaned.c_str());
-          break;
-        }
+  for (uint8_t idx : {5u, 4u, 6u}) {
+    std::string s;
+    if (parent_->usb_get_string_descriptor(idx, s) == ESP_OK && !s.empty()) {
+      std::string cleaned = clean_firmware_string(s);
+      if (!cleaned.empty()) {
+        cached_firmware_ = cleaned;
+        ESP_LOGI(CP_TAG, "Firmware (str idx %d): \"%s\"", idx, cleaned.c_str());
+        break;
       }
     }
   }
+
+  strings_initialized_ = true;
+
+  data.device.manufacturer    = cached_manufacturer_;
+  data.device.model           = cached_model_;
+  data.device.serial_number   = cached_serial_;
+  data.device.firmware_version = cached_firmware_;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

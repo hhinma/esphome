@@ -93,6 +93,14 @@ class CyberPowerProtocol : public UpsProtocolBase {
 
   // ── State ────────────────────────────────────────────────────────────────
   bool interrupt_started_{false};
+  // String descriptors are fetched once and cached here so that
+  // ups_data_.reset() on every update cycle does not cause repeated USB
+  // GET_STRING_DESCRIPTOR requests (and repeated serial-not-found warnings).
+  bool strings_initialized_{false};
+  std::string cached_manufacturer_;
+  std::string cached_model_;
+  std::string cached_serial_;
+  std::string cached_firmware_;
 
   // ── Interrupt report parsers ─────────────────────────────────────────────
   void parse_interrupt_report(const uint8_t* data, size_t len, UpsData &out);
