@@ -3,6 +3,7 @@ import esphome.config_validation as cv
 from esphome.components import binary_sensor
 from esphome.const import (
     CONF_TYPE,
+    CONF_DEVICE_CLASS,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_PROBLEM,
     DEVICE_CLASS_POWER,
@@ -58,17 +59,20 @@ CONFIG_SCHEMA = binary_sensor.binary_sensor_schema(UpsHidBinarySensor).extend(
 
 async def to_code(config):
     parent = await cg.get_variable(config[CONF_UPS_HID_ID])
+    sensor_type = config[CONF_TYPE]
+
+    # Inject the default device class for this sensor type BEFORE calling
+    # new_binary_sensor so ESPHome's own register_binary_sensor handles it
+    # in a version-appropriate way.  Calling set_device_class() directly in
+    # generated C++ broke in ESPHome 2026.3.x where that runtime setter was
+    # removed from BinarySensor.
+    if CONF_DEVICE_CLASS not in config and sensor_type in BINARY_SENSOR_TYPES:
+        sensor_defaults = BINARY_SENSOR_TYPES[sensor_type]
+        if "device_class" in sensor_defaults:
+            config = {**config, CONF_DEVICE_CLASS: sensor_defaults["device_class"]}
+
     var = await binary_sensor.new_binary_sensor(config)
     await cg.register_component(var, config)
 
-    sensor_type = config[CONF_TYPE]
     cg.add(var.set_sensor_type(sensor_type))
     cg.add(parent.register_binary_sensor(var, sensor_type))
-
-    # Apply sensor type specific configuration
-    if sensor_type in BINARY_SENSOR_TYPES:
-        sensor_config = BINARY_SENSOR_TYPES[sensor_type]
-
-        # Override config with sensor type defaults if not specified
-        if "device_class" not in config and "device_class" in sensor_config:
-            cg.add(var.set_device_class(sensor_config["device_class"]))
