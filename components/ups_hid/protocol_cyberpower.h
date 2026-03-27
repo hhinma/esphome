@@ -102,6 +102,13 @@ class CyberPowerProtocol : public UpsProtocolBase {
   std::string cached_serial_;
   std::string cached_firmware_;
 
+  // Power status (online / on-battery) is cached across read cycles.
+  // ups_data_.reset() clears power.status to "" each cycle; report 0x29 is
+  // only guaranteed to appear within MAX_REPORTS_PER_READ items per cycle.
+  // Caching the last-seen value ensures the binary sensors reflect the true
+  // last-known state even when 0x29 falls outside the drain window.
+  std::string cached_power_status_;
+
   // ── Interrupt report parsers ─────────────────────────────────────────────
   void parse_interrupt_report(const uint8_t* data, size_t len, UpsData &out);
   void parse_int_battery_status(const uint8_t* data, size_t len, UpsData &out);

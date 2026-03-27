@@ -356,10 +356,15 @@ void UpsHidComponent::update_sensors() {
     
     bool state = false;
     
-    if (type == binary_sensor_type::ONLINE && ups_data_.power.input_voltage_valid()) {
-      state = true;
-    } else if (type == binary_sensor_type::ON_BATTERY && ups_data_.power.input_voltage_valid()) {
-      state = false; // Opposite of online
+    // Derive ONLINE / ON_BATTERY from the power status string that the
+    // protocol sets (e.g. status::ONLINE, status::ON_BATTERY).  Using
+    // input_voltage_valid() was incorrect: when the UPS is on battery with
+    // AC absent the voltage is NAN, so the old guard always suppressed the
+    // ON_BATTERY=true state.
+    if (type == binary_sensor_type::ONLINE) {
+      state = (ups_data_.power.status == status::ONLINE);
+    } else if (type == binary_sensor_type::ON_BATTERY) {
+      state = (ups_data_.power.status == status::ON_BATTERY);
     } else if (type == binary_sensor_type::LOW_BATTERY) {
       state = ups_data_.battery.is_low();
     }

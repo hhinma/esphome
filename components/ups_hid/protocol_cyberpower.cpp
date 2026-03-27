@@ -125,6 +125,13 @@ bool CyberPowerProtocol::read_data(UpsData &data) {
     interrupt_started_ = true;
   }
 
+  // Restore last-known power status before draining the queue so that
+  // the binary sensors show the correct state even in cycles where report
+  // 0x29 falls outside the MAX_REPORTS_PER_READ drain window.
+  if (!cached_power_status_.empty()) {
+    data.power.status = cached_power_status_;
+  }
+
   bool success = false;
   int  reports_processed = 0;
   uint8_t buf[8];
@@ -302,6 +309,10 @@ void CyberPowerProtocol::parse_int_on_battery(const uint8_t* data, size_t len,
       out.battery.status = battery_status::NORMAL;
     }
   }
+
+  // Keep cache in sync so future cycles that don't receive 0x29 still publish
+  // the correct last-known state (see cached_power_status_ in header).
+  cached_power_status_ = out.power.status;
 
   ESP_LOGD(CP_TAG, "OnBattery flags=0x%02X  discharging=%d  ac_absent=%d  status=%s",
            flags, discharging, ac_absent, out.power.status.c_str());
