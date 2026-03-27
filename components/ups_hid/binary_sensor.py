@@ -3,7 +3,6 @@ import esphome.config_validation as cv
 from esphome.components import binary_sensor
 from esphome.const import (
     CONF_TYPE,
-    DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_PROBLEM,
     DEVICE_CLASS_POWER,
@@ -19,10 +18,20 @@ UpsHidBinarySensor = ups_hid_ns.class_(
 
 BINARY_SENSOR_TYPES = {
     "online": {
-        "device_class": DEVICE_CLASS_CONNECTIVITY,
+        # DEVICE_CLASS_POWER: ON="Power detected" (mains present),
+        # OFF="No power" (mains absent / on battery).
+        # DEVICE_CLASS_CONNECTIVITY was previously used but produced the
+        # misleading label "Disconnected" which users confused with the USB
+        # device going offline rather than mains AC being absent.
+        "device_class": DEVICE_CLASS_POWER,
     },
     "on_battery": {
-        "device_class": DEVICE_CLASS_BATTERY,
+        # DEVICE_CLASS_PROBLEM: ON="Problem" (running on battery, no mains),
+        # OFF="OK" (on mains, normal operation).
+        # DEVICE_CLASS_BATTERY was previously used but that class represents
+        # a LOW BATTERY charge warning (ON="Low", OFF="Normal") which is both
+        # semantically wrong and confusing alongside the low_battery sensor.
+        "device_class": DEVICE_CLASS_PROBLEM,
     },
     "low_battery": {
         "device_class": DEVICE_CLASS_BATTERY,
