@@ -1,6 +1,32 @@
 # ESPHome Components Collection
 
-A collection of ESPHome components for various hardware integrations and monitoring solutions.
+A collection of ESPHome components for various hardware integrations and monitoring solutions.  Derived from bullshit's esphome-components repository to address issues with cyberpower SL750U UPS devices.  At some point, I might add this as a separate component, but for now, I just wanted it working.   
+
+## The cyberpower problem.  The original polling implementation does not work properly with the SL750U.  I can't comment on other Cyberpower UPSs since I do not have any to test with.
+- Replaces polling with Interrupt IN endpoint.
+- Changes ONLINE/ON_BATTERY binary sensor to reflect the data available in the interrupt implementation
+- Changes to device classes for online and on_battery sensors to provide meaningful behavior.  The original on_battery sensor translated into "Low" when the UPS was on battery in Home Assistant, which is not useful.
+
+## Summary
+- transport_interface.h  - Added three default-no-op virtual methods to IUsbTransport:
+- start_interrupt_in() — start listening on the USB HID interrupt IN endpoint
+- stop_interrupt_in() — stop and clean up
+- read_interrupt_report(data, len, timeout_ms) — pull one report from the queue with a timeout
+- transport_esp32.h  - Declared the three overrides
+- Added private InterruptReportItem struct (1-byte length + 8 data bytes)
+- Added interrupt_queue_, interrupt_transfer_, interrupt_in_active_ members
+- Added static interrupt_in_callback()
+- transport_esp32.cpp
+- start_interrupt_in(): allocates a FreeRTOS queue (32 items), allocates and submits a persistent interrupt IN USB transfer on ep_in
+- interrupt_in_callback(): on each received packet, pushes it into the queue and immediately re-submits the transfer; frees transfer cleanly when interrupt_in_active_ is cleared
+- stop_interrupt_in(): clears the flag (callback will free the transfer), deletes the queue
+- handle_device_gone(): now calls stop_interrupt_in() before cleaning up
+- ups_hid.h / ups_hid.cpp - Added forwarding methods start_interrupt_in(), stop_interrupt_in(), and read_interrupt_report() on UpsHidComponent.
+
+- protocol_cyberpower.h  - New interrupt IN report ID constants INT_* for the 0x20–0x88 range observed during probing
+- Kept feature-report IDs for beeper (0x0c) and test (0x14, 0x15, 0x16) commands
+- interrupt_started_ flag to avoid double-starting
+ -Removed all the old polling-specific methods and replaced them with per-report interrupt parsers
 
 ## Available Components
 
