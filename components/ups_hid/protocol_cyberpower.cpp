@@ -410,6 +410,7 @@ void CyberPowerProtocol::read_device_strings(UpsData &data) {
       }
     }
   }
+  //
 
   strings_initialized_ = true;
 

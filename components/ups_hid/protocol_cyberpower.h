@@ -36,6 +36,7 @@ namespace ups_hid {
  * commands; their report IDs come from the device's HID descriptor and may
  * differ from the interrupt IDs above.
  */
+
 class CyberPowerProtocol : public UpsProtocolBase {
  public:
   CyberPowerProtocol(UpsHidComponent *parent) : UpsProtocolBase(parent) {}

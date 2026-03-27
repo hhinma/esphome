@@ -140,6 +140,7 @@ namespace esphome
       void register_text_sensor(text_sensor::TextSensor *sens, const std::string &type);
 #endif
       void register_delay_number(class UpsDelayNumber *number);
+
       
       // Protocol access for button components
       UpsProtocolBase* get_active_protocol() const { return active_protocol_.get(); }
